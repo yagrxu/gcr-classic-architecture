@@ -85,12 +85,16 @@ export class StorageStack extends cdk.Stack {
                 username: 'mongo',
                 password: docDBSecret.secretValueFromJson('password'),
             },
+            engineVersion: '5.0.0',
+
             instanceType: ec2.InstanceType.of(ec2.InstanceClass.T4G, ec2.InstanceSize.MEDIUM),
             vpc,
             vpcSubnets: {
                 subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
             },
             securityGroup: docDBSecurityGroup,
+            deletionProtection: false,
+            storageType: docdb.StorageType.IOPT1,
         });
     }
 }

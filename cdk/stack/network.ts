@@ -16,5 +16,20 @@ export class NetworkStack extends cdk.Stack {
         maxAzs: 3,
         natGateways: 1,
     });
+
+    // create vpn
+
+    // const vpnRoute = new ec2.CfnVPNConnectionRoute(this, 'VPNRoute', {
+    //   destinationCidrBlock: Constants.CIDR,
+    //   vpnConnectionId: vpnAttachment.ref,
+    // });
+    // const vpnRouteTable = new ec2.CfnRouteTable(this, 'VPNRouteTable', {
+    //   vpcId: this.vpc.vpcId,
+    //   tags: [{
+    //     key: 'Name',
+    //     value: id + '-vpn-route-table',
+    //   }],
+    // });
+  
   }
 }

@@ -1,7 +1,7 @@
 import * as cdk from 'aws-cdk-lib';
 import { Construct } from 'constructs';
-import * as eks from 'aws-cdk-lib/aws-eks';
-import * as ec2 from 'aws-cdk-lib/aws-ec2';
+// import * as eks from 'aws-cdk-lib/aws-eks';
+// import * as ec2 from 'aws-cdk-lib/aws-ec2';
 // import * as sqs from 'aws-cdk-lib/aws-sqs';
 
 export class InfraStack extends cdk.Stack {
@@ -21,16 +21,6 @@ export class InfraStack extends cdk.Stack {
     // });
 
     // create ec2 instance
-    const instance = new ec2.Instance(this, 'Instance', {
-      vpc: props.vpc,
-      instanceType: ec2.InstanceType.of(ec2.InstanceClass.BURSTABLE3, ec2.InstanceSize.LARGE),
-      machineImage: ec2.MachineImage.latestAmazonLinux2({
-        edition: ec2.AmazonLinuxEdition.STANDARD,
-        storage: ec2.AmazonLinuxStorage.GENERAL_PURPOSE,
-        cpuType: ec2.AmazonLinuxCpuType.X86_64,
-        userData: ec2.UserData.custom('#!/bin/bash\ngit clone https://github.com/alibaba/RedisShake\ncd RedisShake\nsh build.sh'),
-      }),
-    });
-
+    
   }
 }

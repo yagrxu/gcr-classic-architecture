@@ -38,4 +38,9 @@ AWS_SECRET_ACCESS_KEY=xxx
 ``` shell
 cdk deploy ${STACK_NAME}-networks --require-approval never
 cdk deploy ${STACK_NAME}-storage --require-approval never
+cdk deploy ${STACK_NAME}-infra --require-approval never
+# migration related resources
+cdk deploy ${STACK_NAME}-migration --require-approval never
+# AWS basic test related resources
+cdk deploy ${STACK_NAME}-test --require-approval never
 ```
