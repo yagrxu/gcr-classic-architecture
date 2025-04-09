@@ -19,7 +19,10 @@ const migrationStack = new MigrationStack(app, stackName, {
   vpc: networkStack.vpc} as any);
 
 const codeStack = new TestCodeStack(app, stackName, {
-  vpc: networkStack.vpc} as any);
+  vpc: networkStack.vpc,
+  aosEndpoint: storageStack.aosEnpoint,
+  aosSecretArn: storageStack.aosSecretArn
+} as any);
 
 // Add dependencies between stacks
 migrationStack.addDependency(networkStack);

@@ -1,14 +1,15 @@
 import * as cdk from 'aws-cdk-lib'
 import { Construct } from 'constructs'
 import * as ec2 from 'aws-cdk-lib/aws-ec2'
+import * as iam from 'aws-cdk-lib/aws-iam'
 
 export class TestCodeStack extends cdk.Stack {
   constructor (scope: Construct, id: string, props?: any) {
     const suffix = '-test'
-    super(scope, id + suffix, props);
+    super(scope, id + suffix, props)
 
-    const paramNvm: string = this.node.tryGetContext('nvm')!;
-    const paramNode: string = this.node.tryGetContext('node')!;
+    const paramNvm: string = this.node.tryGetContext('nvm')!
+    const paramNode: string = this.node.tryGetContext('node')!
 
     // create a test security group
     const testSecurityGroup = new ec2.SecurityGroup(this, 'TestSecurityGroup', {
@@ -21,24 +22,36 @@ export class TestCodeStack extends cdk.Stack {
       ec2.Port.tcp(22),
       'Allow SSH access'
     )
-    testSecurityGroup.addIngressRule(
-      ec2.Peer.anyIpv4(),
-      ec2.Port.tcp(8081),
-      'Allow HTTP access'
-    )
 
     // create an EIP
     const eip = new ec2.CfnEIP(this, 'TestEIP', {
       domain: 'vpc'
     })
-    
+
+    // create an EC2 instance with profile that can access secret manager
+    const profile = new iam.Role(this, 'TestProfile', {
+      assumedBy: new iam.ServicePrincipal('ec2.amazonaws.com'),
+      description: 'Test profile',
+      inlinePolicies: {
+        'secret-manager-policy': new iam.PolicyDocument({
+          statements: [
+            new iam.PolicyStatement({
+              actions: ['secretsmanager:GetSecretValue'],
+              resources: [props.aosSecretArn],
+              effect: iam.Effect.ALLOW
+            })
+          ]
+        })
+      }
+    })
+
     const instance = new ec2.Instance(this, 'Instance', {
       vpc: props.vpc,
       instanceName: 'TestCodeInstance',
       vpcSubnets: {
-        subnetType: ec2.SubnetType.PUBLIC,
+        subnetType: ec2.SubnetType.PUBLIC
       },
-
+      role: profile,
       securityGroup: testSecurityGroup,
       instanceType: ec2.InstanceType.of(
         ec2.InstanceClass.BURSTABLE3,
@@ -59,45 +72,83 @@ export class TestCodeStack extends cdk.Stack {
         edition: ec2.AmazonLinuxEdition.STANDARD,
         cpuType: ec2.AmazonLinuxCpuType.X86_64
       })
-    });
+    })
+
     new ec2.CfnEIPAssociation(this, 'EIPAssociation', {
       eip: eip.ref,
-      instanceId: instance.instanceId,
-    });
+      instanceId: instance.instanceId
+    })
+    // add user data install golang, download and start fluentbit to send logs to opensearch
     instance.addUserData(
-      `#!/bin/bash
-sudo rpm --import https://packages.microsoft.com/keys/microsoft.asc
-sudo sh -c 'echo -e "[code]\nname=Visual Studio Code\nbaseurl=https://packages.microsoft.com/yumrepos/vscode\nenabled=1\ngpgcheck=1\ngpgkey=https://packages.microsoft.com/keys/microsoft.asc" > /etc/yum.repos.d/vscode.repo'
+      'curl https://raw.githubusercontent.com/fluent/fluent-bit/master/install.sh | sh',
+      'yum install -y awscli jq',
+      'cat > /usr/local/bin/update-fluent-bit-config.sh << EOF',
+      '#!/bin/bash',
+      `SECRET_ARN="${props.aosSecretArn}"`,
+      'PASSWORD=$(aws secretsmanager get-secret-value --secret-id "$SECRET_ARN" --query SecretString --output text | jq -r .password)',
+      'sed -i "s|HTTP_Passwd.*|HTTP_Passwd        $PASSWORD|" /etc/fluent-bit/fluent-bit.conf',
+      'systemctl restart fluent-bit',
+      'EOF',
+      'chmod +x /usr/local/bin/update-fluent-bit-config.sh',
 
-# https://github.com/amazonlinux/amazon-linux-2023/issues/397
-sleep 10
+      'cat > /etc/fluent-bit/fluent-bit.conf << EOF\n' +
+        '[SERVICE]\n' +
+        '    Flush        5\n' +
+        '    Daemon       Off\n' +
+        '    Log_Level    debug\n' +
+        '    Parsers_File parsers.conf\n' +
+        '\n' +
+        '[INPUT]\n' +
+        '    Name           tail\n' +
+        '    Path           /var/log/*.log\n' +
+        '    Parser         json\n' +
+        '    Tag            logs\n' +
+        '\n' +
+        '[FILTER]\n' +
+        '    Name          record_modifier\n' +
+        '    Match         *\n' +
+        '    Record        hostname ${HOSTNAME}\n' +
+        '    Record        environment prod\n' +
+        '\n' +
+        '[OUTPUT]\n' +
+        '    Name               es\n' +
+        '    Match              *\n' +
+        `    Host               ${props.aosEndpoint.replace(
+          'https://',
+          ''
+        )}\n` +
+        '    Port               443\n' +
+        '    HTTP_User          admin\n' +
+        `    HTTP_Passwd        ${props.aosSecretArn}\n` +
+        '    AWS_Region         us-west-2\n' +
+        '    TLS               On\n' +
+        '    TLS.verify        Off\n' +
+        '    Logstash_Format   On\n' +
+        '    Logstash_Prefix   logs\n' +
+        '    Logstash_DateFormat %Y.%m.%d\n' +
+        '    Generate_ID       On\n' +
+        '    Write_Operation   create\n' +
+        '    Buffer_Size       5MB\n' +
+        '    Trace_Error      On\n' +
+        '    Trace_Output     On\n' +
+        '    Suppress_Type_Name On\n' +
+        'EOF',
 
-sudo dnf install -y code git
-sudo tee /etc/systemd/system/code-server.service <<EOF
-[Unit]
-Description=Start code server
+      'cat > /etc/fluent-bit/parsers.conf << EOF\n' +
+        '[PARSER]\n' +
+        '    Name         json\n' +
+        '    Format       json\n' +
+        '    Time_Key     timestamp\n' +
+        '    Time_Format  %Y-%m-%dT%H:%M:%S.%L\n' +
+        '    Time_Keep    On\n' +
+        '    Time_Offset  +0000\n' +
+        'EOF',
 
-[Service]
-ExecStart=/usr/bin/code serve-web --port 8080 --host 0.0.0.0 --without-connection-token
-Restart=always
-Type=simple
-User=ec2-user
+      '/usr/local/bin/update-fluent-bit-config.sh',
 
-[Install]
-WantedBy = multi-user.target
-EOF
-
-sudo systemctl daemon-reload
-sudo systemctl enable --now code-server
-
-# Install Node.js
-sudo -u ec2-user -i <<EOF
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v${paramNvm}/install.sh | bash
-source .bashrc
-nvm install ${paramNode}
-nvm use ${paramNode}
-EOF`,
-    );
-    
+      // Start service
+      'systemctl enable fluent-bit',
+      'systemctl start fluent-bit'
+    )
   }
 }
