@@ -16,7 +16,8 @@
 2. Bootstrap
 
     ```shell
-    cdk bootstrap
+    # default region set to us-west-2
+    cdk bootstrap aws://<accountID>/us-west-2
 
     ```
 

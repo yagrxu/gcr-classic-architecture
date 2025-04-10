@@ -4,6 +4,7 @@ import * as ec2 from 'aws-cdk-lib/aws-ec2'
 import * as iam from 'aws-cdk-lib/aws-iam'
 import * as fs from 'fs'
 import * as path from 'path'
+import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager'
 
 export class TestCodeStack extends cdk.Stack {
   constructor (scope: Construct, id: string, props?: any) {
@@ -81,11 +82,15 @@ export class TestCodeStack extends cdk.Stack {
       eip: eip.ref,
       instanceId: instance.instanceId
     })
+
     let updateScript = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'update-fluent-bit-config.sh'), 'utf8');
     let fluentBitConfig = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'fluent-bit.conf'), 'utf8');
     const parsersConfig = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'parsers.conf'), 'utf8');
 
-    updateScript = updateScript.replace('{{SECRET_ARN}}', props.secretArn);
+    // get secret from name
+    const opensearchSecret = secretsmanager.Secret.fromSecretNameV2(this, 'Secret', `${id}-opensearch-log-credentials`);
+
+    updateScript = updateScript.replace('{{SECRET_ARN}}', opensearchSecret.secretArn);
     fluentBitConfig = fluentBitConfig.replace('{{OPENSEARCH_URL}}', props.aosEndpoint.replace('https://', ''));
 
     // add user data install golang, download and start fluentbit to send logs to opensearch
