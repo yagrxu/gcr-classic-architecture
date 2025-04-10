@@ -207,17 +207,6 @@ export class StorageStack extends cdk.Stack {
               appLogEnabled: true,
             }
           });
-
-        // create VPC endpoint for opensearch
-        //   vpc.addInterfaceEndpoint('OpenSearchVpcEndpoint', {
-        //     service: new ec2.InterfaceVpcEndpointAwsService('es'),
-        //     subnets: {
-        //       onePerAz: true,
-        //       subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
-        //     },
-        //     securityGroups: [opensearchSecurityGroup],
-        //   });
-
         this.aosEnpoint = opensearchCluster.domainEndpoint;
         this.aosSecretArn = opensearchSecret.secretArn;
 

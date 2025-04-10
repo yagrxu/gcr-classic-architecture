@@ -2,6 +2,8 @@ import * as cdk from 'aws-cdk-lib'
 import { Construct } from 'constructs'
 import * as ec2 from 'aws-cdk-lib/aws-ec2'
 import * as iam from 'aws-cdk-lib/aws-iam'
+import * as fs from 'fs'
+import * as path from 'path'
 
 export class TestCodeStack extends cdk.Stack {
   constructor (scope: Construct, id: string, props?: any) {
@@ -17,6 +19,7 @@ export class TestCodeStack extends cdk.Stack {
       allowAllOutbound: true,
       description: 'Test security group'
     })
+
     testSecurityGroup.addIngressRule(
       ec2.Peer.anyIpv4(),
       ec2.Port.tcp(22),
@@ -78,72 +81,28 @@ export class TestCodeStack extends cdk.Stack {
       eip: eip.ref,
       instanceId: instance.instanceId
     })
+    let updateScript = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'update-fluent-bit-config.sh'), 'utf8');
+    let fluentBitConfig = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'fluent-bit.conf'), 'utf8');
+    const parsersConfig = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'parsers.conf'), 'utf8');
+
+    updateScript = updateScript.replace('{{SECRET_ARN}}', props.secretArn);
+    fluentBitConfig = fluentBitConfig.replace('{{OPENSEARCH_URL}}', props.aosEndpoint.replace('https://', ''));
+
     // add user data install golang, download and start fluentbit to send logs to opensearch
     instance.addUserData(
       'curl https://raw.githubusercontent.com/fluent/fluent-bit/master/install.sh | sh',
       'yum install -y awscli jq',
-      'cat > /usr/local/bin/update-fluent-bit-config.sh << EOF',
-      '#!/bin/bash',
-      `SECRET_ARN="${props.aosSecretArn}"`,
-      'PASSWORD=$(aws secretsmanager get-secret-value --secret-id "$SECRET_ARN" --query SecretString --output text | jq -r .password)',
-      'sed -i "s|HTTP_Passwd.*|HTTP_Passwd        $PASSWORD|" /etc/fluent-bit/fluent-bit.conf',
-      'systemctl restart fluent-bit',
-      'EOF',
+      
+      `cat > /usr/local/bin/update-fluent-bit-config.sh << 'EOF'\n${updateScript}\nEOF`,
       'chmod +x /usr/local/bin/update-fluent-bit-config.sh',
 
-      'cat > /etc/fluent-bit/fluent-bit.conf << EOF\n' +
-        '[SERVICE]\n' +
-        '    Flush        5\n' +
-        '    Daemon       Off\n' +
-        '    Log_Level    debug\n' +
-        '    Parsers_File parsers.conf\n' +
-        '\n' +
-        '[INPUT]\n' +
-        '    Name           tail\n' +
-        '    Path           /var/log/*.log\n' +
-        '    Parser         json\n' +
-        '    Tag            logs\n' +
-        '\n' +
-        '[FILTER]\n' +
-        '    Name          record_modifier\n' +
-        '    Match         *\n' +
-        '    Record        hostname ${HOSTNAME}\n' +
-        '    Record        environment prod\n' +
-        '\n' +
-        '[OUTPUT]\n' +
-        '    Name               es\n' +
-        '    Match              *\n' +
-        `    Host               ${props.aosEndpoint.replace(
-          'https://',
-          ''
-        )}\n` +
-        '    Port               443\n' +
-        '    HTTP_User          admin\n' +
-        `    HTTP_Passwd        ${props.aosSecretArn}\n` +
-        '    AWS_Region         us-west-2\n' +
-        '    TLS               On\n' +
-        '    TLS.verify        Off\n' +
-        '    Logstash_Format   On\n' +
-        '    Logstash_Prefix   logs\n' +
-        '    Logstash_DateFormat %Y.%m.%d\n' +
-        '    Generate_ID       On\n' +
-        '    Write_Operation   create\n' +
-        '    Buffer_Size       5MB\n' +
-        '    Trace_Error      On\n' +
-        '    Trace_Output     On\n' +
-        '    Suppress_Type_Name On\n' +
-        'EOF',
+      // Create Fluent Bit config
+      `cat > /etc/fluent-bit/fluent-bit.conf << EOF\n${fluentBitConfig}\nEOF`,
 
-      'cat > /etc/fluent-bit/parsers.conf << EOF\n' +
-        '[PARSER]\n' +
-        '    Name         json\n' +
-        '    Format       json\n' +
-        '    Time_Key     timestamp\n' +
-        '    Time_Format  %Y-%m-%dT%H:%M:%S.%L\n' +
-        '    Time_Keep    On\n' +
-        '    Time_Offset  +0000\n' +
-        'EOF',
+      // Create parsers config
+      `cat > /etc/fluent-bit/parsers.conf << EOF\n${parsersConfig}\nEOF`,
 
+      // Run the update script
       '/usr/local/bin/update-fluent-bit-config.sh',
 
       // Start service
