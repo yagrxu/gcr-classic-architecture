@@ -15,28 +15,39 @@ export class NetworkStack extends cdk.Stack {
       vpcName: id + '-vpc',
       ipAddresses: ec2.IpAddresses.cidr(Constants.CIDR),
       maxAzs: 3,
-      natGateways: 1,
+      natGateways: Constants.NAT_GATEWAY_ENABLED ? 1:0,
       subnetConfiguration: [] // disable automatic subnet creation
     });
 
     const azs = cdk.Stack.of(this).availabilityZones; // get available AZs
 
     // Define how many pairs to create
-    const publicPairCount = 2;         // Number of public subnets (one per AZ)
-    const privatePairCount = 2;        // Each pair will create 2 private subnets (total 4)
+    let publicPairCount = 1;         // Number of public subnets (one per AZ)
+    let privatePairCount = 2;        // Each pair will create 2 private subnets (total 4)
+    if (!Constants.NAT_GATEWAY_ENABLED) {
+      publicPairCount = 2;
+      privatePairCount = 0;
+    }
 
     // Create public subnets and store them in an array.
     const publicSubnets: ec2.PublicSubnet[] = [];
-    const azArray = ['a', 'b']
+    const azArray = ['a', 'b'];
     
     for (let i = 0; i < publicPairCount; i++) {
       // Use Fn.cidr with a split based on the number of public subnets.
-      const subnet = new ec2.PublicSubnet(this, `PublicSubnet${i + 1}${azArray[i]}`, {
+      const subnet1 = new ec2.PublicSubnet(this, `PublicSubnet${i + 1}a`, {
         vpcId: vpc.vpcId,
         availabilityZone: azs[i],
         cidrBlock: cdk.Fn.select(i, cdk.Fn.cidr(Constants.CIDR, publicPairCount, '0')),
       });
-      publicSubnets.push(subnet);
+      publicSubnets.push(subnet1);
+
+      const subnet2 = new ec2.PublicSubnet(this, `PublicSubnet${i + 1}b`, {
+        vpcId: vpc.vpcId,
+        availabilityZone: azs[i],
+        cidrBlock: cdk.Fn.select(i, cdk.Fn.cidr(Constants.CIDR, publicPairCount, '0')),
+      });
+      publicSubnets.push(subnet2);
     }
 
     // Create private subnets in pairs and store them in an array.
