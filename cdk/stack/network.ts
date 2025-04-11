@@ -10,95 +10,103 @@ export class NetworkStack extends cdk.Stack {
     const suffix = '-networks';
     super(scope, id + suffix, props);
 
-    // Create VPC with no subnets; subnets will be added manually.
+    const useThreeAzs = true;
+    const privateSubnets = 2;
+    const azCount = Constants.AZ_COUNT;
+
+    // CDK will not manage NAT for us; we handle it manually
     const vpc = new ec2.Vpc(this, 'VPC', {
       vpcName: id + '-vpc',
       ipAddresses: ec2.IpAddresses.cidr(Constants.CIDR),
-      maxAzs: 3,
-      natGateways: Constants.NAT_GATEWAY_ENABLED ? 1:0,
-      subnetConfiguration: [] // disable automatic subnet creation
+      maxAzs: azCount,
+      natGateways: 0,
+      subnetConfiguration: [
+        {
+          cidrMask: 24,
+          name: 'public',
+          subnetType: ec2.SubnetType.PUBLIC,
+        },
+        {
+          cidrMask: 24,
+          name: 'private-1a',
+          subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+        },
+        {
+          cidrMask: 24,
+          name: 'private-2a',
+          subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+
+        }
+      ],
     });
 
-    const azs = cdk.Stack.of(this).availabilityZones; // get available AZs
-
-    // Define how many pairs to create
-    let publicPairCount = 1;         // Number of public subnets (one per AZ)
-    let privatePairCount = 2;        // Each pair will create 2 private subnets (total 4)
-    if (!Constants.NAT_GATEWAY_ENABLED) {
-      publicPairCount = 2;
-      privatePairCount = 0;
-    }
-
-    // Create public subnets and store them in an array.
-    const publicSubnets: ec2.PublicSubnet[] = [];
-    const azArray = ['a', 'b'];
-    
-    for (let i = 0; i < publicPairCount; i++) {
-      // Use Fn.cidr with a split based on the number of public subnets.
-      const subnet1 = new ec2.PublicSubnet(this, `PublicSubnet${i + 1}a`, {
-        vpcId: vpc.vpcId,
-        availabilityZone: azs[i],
-        cidrBlock: cdk.Fn.select(i, cdk.Fn.cidr(Constants.CIDR, publicPairCount, '0')),
-      });
-      publicSubnets.push(subnet1);
-
-      const subnet2 = new ec2.PublicSubnet(this, `PublicSubnet${i + 1}b`, {
-        vpcId: vpc.vpcId,
-        availabilityZone: azs[i],
-        cidrBlock: cdk.Fn.select(i, cdk.Fn.cidr(Constants.CIDR, publicPairCount, '0')),
-      });
-      publicSubnets.push(subnet2);
-    }
-
-    // Create private subnets in pairs and store them in an array.
-    const privateSubnets: ec2.PrivateSubnet[] = [];
-    // We'll generate 2 subnets per pair (e.g. for two different AZs)
-    for (let i = 0; i < privatePairCount; i++) {
-      // First private subnet in the pair (in AZ0)
-      const subnetA = new ec2.PrivateSubnet(this, `PrivateSubnet${i + 1}a`, {
-        vpcId: vpc.vpcId,
-        availabilityZone: azs[0],
-        // We split the CIDR into privatePairCount*2 blocks.
-        cidrBlock: cdk.Fn.select(i * 2, cdk.Fn.cidr(Constants.CIDR, privatePairCount * 2, '1')),
-      });
-      privateSubnets.push(subnetA);
-
-      // Second private subnet in the pair (in AZ1)
-      const subnetB = new ec2.PrivateSubnet(this, `PrivateSubnet${i + 1}b`, {
-        vpcId: vpc.vpcId,
-        availabilityZone: azs[1],
-        cidrBlock: cdk.Fn.select(i * 2 + 1, cdk.Fn.cidr(Constants.CIDR, privatePairCount * 2, '1')),
-      });
-      privateSubnets.push(subnetB);
-    }
-
-    // Create a single public route table and associate it with all public subnets.
+    // Create public route table
     const publicRouteTable = new ec2.CfnRouteTable(this, 'PublicRouteTable', {
       vpcId: vpc.vpcId,
       tags: [{ key: 'Name', value: id + '-public-route-table' }],
     });
-    publicSubnets.forEach((subnet, index) => {
-      new ec2.CfnSubnetRouteTableAssociation(this, `PublicSubnetAssociation${index + 1}`, {
-        subnetId: subnet.subnetId,
-        routeTableId: publicRouteTable.ref,
-      });
-    });
 
-    // Create a single private route table and associate it with all private subnets.
+    
+    // Create private route table
     const privateRouteTable = new ec2.CfnRouteTable(this, 'PrivateRouteTable', {
       vpcId: vpc.vpcId,
       tags: [{ key: 'Name', value: id + '-private-route-table' }],
     });
-    privateSubnets.forEach((subnet, index) => {
-      new ec2.CfnSubnetRouteTableAssociation(this, `PrivateSubnetAssociation${index + 1}`, {
-        subnetId: subnet.subnetId,
-        routeTableId: privateRouteTable.ref,
+
+    if (Constants.NAT_GATEWAY_ENABLED) {
+      // Create an Elastic IP for NAT
+      const natEip = new ec2.CfnEIP(this, 'NATEIP', {
+        domain: 'vpc',
       });
+
+      // Create NAT Gateway in the first public subnet
+      const natGateway = new ec2.CfnNatGateway(this, 'NATGateway', {
+        subnetId: vpc.publicSubnets[0].subnetId,
+        allocationId: natEip.attrAllocationId,
+        connectivityType: 'public',
+      });
+
+      publicRouteTable.addDependency(natGateway);
+      privateRouteTable.addDependency(natGateway);
+
+      new ec2.CfnRoute(this, 'PrivateDefaultRoute', {
+        routeTableId: privateRouteTable.ref,
+        destinationCidrBlock: '0.0.0.0/0',
+        natGatewayId: natGateway.ref,
+      });
+    }
+      
+    
+
+    // Add default route to public route table for Internet Gateway
+    new ec2.CfnRoute(this, 'PublicDefaultRoute', {
+      routeTableId: publicRouteTable.ref,
+      destinationCidrBlock: '0.0.0.0/0',
+      gatewayId: vpc.internetGatewayId!,
     });
 
-    // Set the vpc property.
-    this.vpc = vpc;
+    // Associate each public subnet with the public route table
+    for (let i = 0; i < vpc.publicSubnets.length; i++) {
+      const assoc = new ec2.CfnSubnetRouteTableAssociation(this, `PublicSubnetAssoc${i}`, {
+        subnetId: vpc.publicSubnets[i].subnetId,
+        routeTableId: publicRouteTable.ref,
+      });
+      assoc.addDependency(publicRouteTable);
+      assoc.addDependency(vpc.publicSubnets[i].node.defaultChild as ec2.CfnSubnet);
 
-    // Additional code (e.g., VPN creation) can follow here.
+    }
+
+    // Associate each private subnet with the private route table
+    for (let i = 0; i < (privateSubnets * azCount); i++) {
+      const assoc = new ec2.CfnSubnetRouteTableAssociation(this, `PrivateSubnetAssoc${i}`, {
+        subnetId: vpc.privateSubnets[i].subnetId,
+        routeTableId: privateRouteTable.ref,
+      });
+      assoc.addDependency(privateRouteTable);
+      assoc.addDependency(vpc.privateSubnets[i].node.defaultChild as ec2.CfnSubnet);
+    }
+
+    // Set exported VPC
+    this.vpc = vpc;
   }
 }

@@ -152,6 +152,7 @@ export class StorageStack extends cdk.Stack {
                 secretStringTemplate: JSON.stringify({ username: 'admin' }),
                 generateStringKey: 'password',
                 requireEachIncludedType: true,
+                excludeCharacters: '@%*()_+=`~{}|[]\\:";\'?,./',
                 // excludePunctuation: true,
             },
         });
@@ -182,6 +183,7 @@ export class StorageStack extends cdk.Stack {
               masterUserName: 'admin',
               masterUserPassword: opensearchSecret.secretValueFromJson('password'),
             },
+            
             accessPolicies: [
               new PolicyStatement({
             effect: Effect.ALLOW,
@@ -207,6 +209,7 @@ export class StorageStack extends cdk.Stack {
               appLogEnabled: true,
             }
           });
+        
         this.aosEnpoint = opensearchCluster.domainEndpoint;
         this.aosSecretArn = opensearchSecret.secretArn;
 
